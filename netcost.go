@@ -20,6 +20,9 @@ import (
 	"github.com/kinvolk/netcost/pkg/netcostdata"
 )
 
+// #include "bpf/netcost-bpf.h"
+import "C"
+
 const (
 	SO_ATTACH_BPF = 50
 )
@@ -49,14 +52,16 @@ func init() {
 	}
 }
 
-type NetworkStat struct {
-	IngressBytes uint64 `json:"ingressBytes"`
-	EgressBytes  uint64 `json:"egressBytes"`
+type CidrStats struct {
+	BytesRecv   uint64 `json:"bytesRecv"`
+	BytesSent   uint64 `json:"bytesSent"`
+	PacketsRecv uint64 `json:"packetsRecv"`
+	PacketsSent uint64 `json:"packetsSent"`
 }
 
 type NetCost struct {
-	Timestamp string                  `json:"timestamp"`
-	Networks  map[string]*NetworkStat `json:"networks"`
+	Timestamp string                `json:"timestamp"`
+	Networks  map[string]*CidrStats `json:"networks"`
 }
 
 /* Functions openRawSock and attachSocket from github.com/cilium/ebpf:
@@ -115,7 +120,7 @@ func initLPM(m *ebpf.Map, netList []net.IPNet) error {
 		siz, _ := n.Mask.Size()
 		IPBigEndian := unsafe.Pointer(&n.IP[0])
 		key := []uint32{uint32(siz), *(*uint32)(IPBigEndian)}
-		value := uint64(0)
+		value := C.struct_cidr_stats{}
 		err := m.Put(unsafe.Pointer(&key[0]), unsafe.Pointer(&value))
 		if err != nil {
 			return err
@@ -124,12 +129,12 @@ func initLPM(m *ebpf.Map, netList []net.IPNet) error {
 	return nil
 }
 
-func dumpLPM(m *ebpf.Map, ingress bool, netList []net.IPNet, netCost *NetCost) (err error) {
+func dumpLpmStats(m *ebpf.Map, netList []net.IPNet, netCost *NetCost) (err error) {
 	var key [2]uint32
-	var res uint64
+	var value C.struct_cidr_stats
 
 	iter := m.Iterate()
-	for iter.Next(&key, unsafe.Pointer(&res)) {
+	for iter.Next(&key, unsafe.Pointer(&value)) {
 		ip := make(net.IP, 4)
 		ipPtr := (uintptr)(unsafe.Pointer(&key[1]))
 		for i := 0; i < 4; i++ {
@@ -141,13 +146,12 @@ func dumpLPM(m *ebpf.Map, ingress bool, netList []net.IPNet, netCost *NetCost) (
 		}
 		network := n.String()
 		if _, ok := netCost.Networks[network]; !ok {
-			netCost.Networks[network] = &NetworkStat{}
+			netCost.Networks[network] = &CidrStats{}
 		}
-		if ingress {
-			netCost.Networks[network].IngressBytes = res
-		} else {
-			netCost.Networks[network].EgressBytes = res
-		}
+		netCost.Networks[network].BytesRecv = uint64(value.bytes_recv)
+		netCost.Networks[network].BytesSent = uint64(value.bytes_sent)
+		netCost.Networks[network].PacketsRecv = uint64(value.packets_recv)
+		netCost.Networks[network].PacketsSent = uint64(value.packets_sent)
 	}
 	err = iter.Err()
 	return
@@ -170,23 +174,13 @@ func attachSocket(ifindex int) error {
 	}
 	defer coll.Close()
 
-	ingressStats := coll.DetachMap("ingress_ip")
-	if ingressStats == nil {
-		panic(fmt.Errorf("no map named ingress_ip found"))
+	lpmStats := coll.DetachMap("lpm_stats")
+	if lpmStats == nil {
+		panic(fmt.Errorf("no map named lpm_stats found"))
 	}
-	defer ingressStats.Close()
+	defer lpmStats.Close()
 
-	egressStats := coll.DetachMap("egress_ip")
-	if egressStats == nil {
-		panic(fmt.Errorf("no map named egress_ip found"))
-	}
-	defer egressStats.Close()
-
-	err = initLPM(ingressStats, netList)
-	if err != nil {
-		return err
-	}
-	err = initLPM(egressStats, netList)
+	err = initLPM(lpmStats, netList)
 	if err != nil {
 		return err
 	}
@@ -212,13 +206,9 @@ func attachSocket(ifindex int) error {
 
 		netCost := &NetCost{
 			Timestamp: time.Now().Format(time.RFC3339),
-			Networks:  make(map[string]*NetworkStat),
+			Networks:  make(map[string]*CidrStats),
 		}
-		err := dumpLPM(ingressStats, true, netList, netCost)
-		if err != nil {
-			panic(err)
-		}
-		err = dumpLPM(egressStats, false, netList, netCost)
+		err := dumpLpmStats(lpmStats, netList, netCost)
 		if err != nil {
 			panic(err)
 		}
