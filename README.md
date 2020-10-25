@@ -3,7 +3,7 @@
 ## How to use
 
 ```
-docker run --rm --privileged --net=host -ti docker.io/kinvolk/netcost:alban-initial-code netcost -ifindex 3 -netlist 192.168.0.0/16,127.0.0.0/8,10.0.0.0/8,0.0.0.0/0 -pretty
+docker run --rm --privileged --net=host -ti docker.io/kinvolk/netcost netcost -ifindex 3 -netlist 192.168.0.0/16,127.0.0.0/8,10.0.0.0/8,0.0.0.0/0 -pretty
 {
     "timestamp": "2020-08-07T17:05:36+02:00",
     "networks": {

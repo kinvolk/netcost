@@ -81,12 +81,13 @@ func NewTracer(netList []net.IPNet) (*Tracer, error) {
 
 func (t *Tracer) initLpmMap(m *ebpf.Map) error {
 	for _, n := range t.netList {
-		if len(n.IP) != 4 {
+		ip := n.IP.To4()
+		if ip == nil {
 			// Only IPv4 is supported for now
 			continue
 		}
 		siz, _ := n.Mask.Size()
-		IPBigEndian := unsafe.Pointer(&n.IP[0])
+		IPBigEndian := unsafe.Pointer(&ip[0])
 		key := []uint32{uint32(siz), *(*uint32)(IPBigEndian)}
 		value := C.struct_cidr_stats{}
 		err := m.Put(unsafe.Pointer(&key[0]), unsafe.Pointer(&value))
@@ -99,30 +100,31 @@ func (t *Tracer) initLpmMap(m *ebpf.Map) error {
 
 /* Functions openRawSock from github.com/cilium/ebpf:
  * MIT License
- * https://github.com/cilium/ebpf/blob/master/example_sock_elf_test.go
+ * https://github.com/cilium/ebpf/blob/edc4db4deb5baf4e342634a35dad3b0960b2eea3/example_sock_elf_test.go
  */
 func openRawSock(ifindex int, netnsPath string) (int, error) {
 	// Lock the OS Thread so we don't accidentally switch namespaces
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	// Save the current network namespace
-	origns, _ := netns.Get()
-	defer origns.Close()
-
 	if netnsPath != "" {
+		// Save the current network namespace
+		origns, _ := netns.Get()
+		defer origns.Close()
+
 		netnsHandle, err := netns.GetFromPath(netnsPath)
 		if err != nil {
 			return -1, err
 		}
+		defer netnsHandle.Close()
 		err = netns.Set(netnsHandle)
 		if err != nil {
 			return -1, err
 		}
-	}
 
-	// Switch back to the original namespace
-	defer netns.Set(origns)
+		// Switch back to the original namespace
+		defer netns.Set(origns)
+	}
 
 	/* In the absence of htons(ETH_P_ALL) in Golang */
 	var ETH_P_ALL uint16
@@ -165,8 +167,9 @@ func (t *Tracer) RegisterIface(name string, ifindex int, netns string) (err erro
 		return fmt.Errorf("cannot create new ebpf collection: ", err)
 	}
 
-	i.lpmStatsMap = i.coll.DetachMap("lpm_stats")
-	if i.lpmStatsMap == nil {
+	var ok bool
+	i.lpmStatsMap, ok = i.coll.Maps["lpm_stats"]
+	if !ok {
 		return fmt.Errorf("no map named lpm_stats found")
 	}
 
@@ -180,8 +183,8 @@ func (t *Tracer) RegisterIface(name string, ifindex int, netns string) (err erro
 		return err
 	}
 
-	i.prog = i.coll.DetachProgram("bpf_prog1")
-	if i.prog == nil {
+	i.prog, ok = i.coll.Programs["bpf_prog1"]
+	if !ok {
 		return errors.New("bpf program not found")
 	}
 
@@ -243,14 +246,8 @@ func closeIface(i *iface) {
 	if i.coll != nil {
 		i.coll.Close()
 	}
-	if i.lpmStatsMap != nil {
-		i.lpmStatsMap.Close()
-	}
 	if i.sockFd != -1 {
 		syscall.Close(i.sockFd)
-	}
-	if i.prog != nil {
-		i.prog.Close()
 	}
 }
 

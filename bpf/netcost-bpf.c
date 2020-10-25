@@ -41,14 +41,12 @@ int bpf_prog1(struct __sk_buff *skb)
 
 	if (skb->pkt_type == PACKET_OUTGOING) {
 		int ret = bpf_skb_load_bytes(skb, nhoff + offsetof(struct iphdr, daddr), &lpm_key[1], 4);
-		if (ret < 0) {
+		if (ret < 0)
 			return 0;
-		}
 	} else {
 		int ret = bpf_skb_load_bytes(skb, nhoff + offsetof(struct iphdr, saddr), &lpm_key[1], 4);
-		if (ret < 0) {
+		if (ret < 0)
 			return 0;
-		}
 	}
 	value = bpf_map_lookup_elem(&lpm_stats, lpm_key);
 

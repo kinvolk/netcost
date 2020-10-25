@@ -22,7 +22,7 @@ var (
 func init() {
 	flag.BoolVar(&pretty, "pretty", false, "apply indentation on json output")
 	flag.IntVar(&ifindex, "ifindex", 0, "network interface index")
-	flag.StringVar(&netListParam, "netlist", "192.168.0.0/16,127.0.0.0/8,10.0.0.0/8,0.0.0.0/0", "comma separated CIDRs")
+	flag.StringVar(&netListParam, "netlist", "", "comma separated CIDRs")
 	flag.StringVar(&netnsParam, "netns", "", "path to a network namespace (e.g. /proc/42/ns/net)")
 	flag.Parse()
 	netArr := strings.Split(netListParam, ",")
